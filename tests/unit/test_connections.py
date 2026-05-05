@@ -33,7 +33,9 @@ class TestAdapterResponseQueryId:
         mock_client = MagicMock()
         mock_client.command.return_value = None
 
-        response, _ = _make_manager_with_client(mock_client).execute('CREATE TABLE t (x Int32) ENGINE=Memory')
+        response, _ = _make_manager_with_client(mock_client).execute(
+            'CREATE TABLE t (x Int32) ENGINE=Memory'
+        )
 
         _, kwargs = mock_client.command.call_args
         assert 'query_id' in kwargs
