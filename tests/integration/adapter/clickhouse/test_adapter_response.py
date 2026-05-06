@@ -1,3 +1,5 @@
+import os
+
 import pytest
 from clickhouse_connect import get_client
 from dbt.tests.util import run_dbt
@@ -19,14 +21,19 @@ class TestAdapterResponseQueryId:
         query_id = results.results[0].adapter_response.get("query_id")
         assert query_id, "adapter_response did not contain a query_id"
 
-        ch = get_client(
-            host=test_config["host"],
-            port=test_config.get("client_port", 8123),
-            username=test_config["user"],
-            password=test_config["password"],
-            secure=test_config["secure"],
-        )
-        ch.command("SYSTEM FLUSH LOGS")
+        on_cloud = os.environ.get('DBT_CH_TEST_CLOUD', default='').lower() in ('1', 'true', 'yes')
+        cluster = os.environ.get('DBT_CH_TEST_CLUSTER', '').strip()
+        cluster = 'default' if not cluster and on_cloud else cluster
 
-        count = ch.command(f"SELECT count() FROM system.query_log WHERE query_id = '{query_id}'")
-        assert count > 0, f"query_id {query_id!r} not found in system.query_log"
+        cluster_clause = f'ON CLUSTER "{cluster}"' if cluster else ''
+        project.run_sql(f"SYSTEM FLUSH LOGS {cluster_clause}", fetch="all")
+
+        from_clause = (
+            f"FROM clusterAllReplicas('{cluster}', system.query_log)"
+            if on_cloud
+            else "FROM system.query_log"
+        )
+        count = project.run_sql(
+            f"SELECT count() {from_clause} WHERE query_id = '{query_id}'", fetch="one"
+        )
+        assert count[0] > 0, f"query_id {query_id!r} not found in system.query_log"
