@@ -20,21 +20,27 @@
 {% endmacro %}
 
 {% macro clickhouse__list_relations_without_caching(schema_relation) %}
-  {% call statement('list_relations_without_caching', fetch_result=True) -%}
+  {{ return(clickhouse__list_relations_for_schemas([schema_relation])) }}
+{% endmacro %}
+
+{% macro clickhouse__list_relations_for_schemas(schema_relations) %}
+  {%- set schemas = schema_relations | map(attribute='schema') | list -%}
+  {%- set cluster = adapter.get_clickhouse_cluster_name() -%}
+  {% call statement('list_relations_for_schemas', fetch_result=True) -%}
     with mv_sources as (
-      -- Find all MVs and their target tables (database and name of the MV, plus the SELECT SQL)
       select
         name as mv_name,
         database as mv_database,
         any(as_select) as mv_sql,
         any(replaceRegexpOne(create_table_query, '.*TO\\s+`?([^`\\s(]+)`?\\.`?([^`\\s(]+)`?.*', '\\1.\\2')) as target_fqn
-      {% if adapter.get_clickhouse_cluster_name() -%}
-      from clusterAllReplicas({{ adapter.get_clickhouse_cluster_name() }}, system.tables)
+      {% if cluster -%}
+      from clusterAllReplicas({{ cluster }}, system.tables)
       {% else %}
       from system.tables
       {% endif %}
       where engine = 'MaterializedView'
         and create_table_query like '%TO %'
+        and ({% for s in schemas %}create_table_query like '%{{ s }}%'{% if not loop.last %} or {% endif %}{% endfor %})
       group by mv_name, mv_database
     )
     select
@@ -51,20 +57,20 @@
         map('schema', mv_sources.mv_database, 'name', mv_sources.mv_name, 'sql', mv_sources.mv_sql),
         mv_sources.mv_name != ''
       ) as mvs_pointing_to_it,
-      {%- if adapter.get_clickhouse_cluster_name() -%}
-        count(distinct _shard_num) > 1  as  is_on_cluster
-        from clusterAllReplicas({{ adapter.get_clickhouse_cluster_name() }}, system.tables) as t
+      {%- if cluster -%}
+        count(distinct _shard_num) > 1 as is_on_cluster
+        from clusterAllReplicas({{ cluster }}, system.tables) as t
       {%- else -%}
         0 as is_on_cluster
         from system.tables as t
       {% endif %}
         join system.databases as db on t.database = db.name
         left join mv_sources on mv_sources.target_fqn = concat(t.database, '.', t.name)
-      where schema = '{{ schema_relation.schema }}'
+      where schema in ({% for s in schemas %}'{{ s }}'{% if not loop.last %}, {% endif %}{% endfor %})
       group by name, schema, type, db_engine
 
   {% endcall %}
-  {{ return(load_result('list_relations_without_caching').table) }}
+  {{ return(load_result('list_relations_for_schemas').table) }}
 {% endmacro %}
 
 {% macro clickhouse__get_columns_in_relation(relation) -%}

@@ -350,40 +350,55 @@ class ClickHouseAdapter(SQLAdapter):
     ) -> List[ClickHouseRelation]:
         kwargs = {'schema_relation': schema_relation}
         results = self.execute_macro('list_relations_without_caching', kwargs=kwargs)
-        conn_supports_exchange = self.supports_atomic_exchange()
+        return [self._row_to_relation(row) for row in results]
 
-        cluster_configured = bool(self.get_clickhouse_cluster_name())
+    def _row_to_relation(self, row) -> ClickHouseRelation:
+        name, schema, type_info, db_engine, mvs_pointing_to_it, on_cluster = row
+        if type_info == 'materialized_view':
+            rel_type = ClickHouseRelationType.MaterializedView
+        elif type_info == 'view':
+            rel_type = ClickHouseRelationType.View
+        elif type_info == 'dictionary':
+            rel_type = ClickHouseRelationType.Dictionary
+        else:
+            rel_type = ClickHouseRelationType.Table
+        can_exchange = (
+            self.supports_atomic_exchange()
+            and rel_type == ClickHouseRelationType.Table
+            and engine_can_atomic_exchange(db_engine)
+        )
+        can_on_cluster = (
+            bool(self.get_clickhouse_cluster_name()) or on_cluster >= 1
+        ) and db_engine != 'Replicated'
+        return self.Relation.create(
+            database='',
+            schema=schema,
+            identifier=name,
+            type=rel_type,
+            can_exchange=can_exchange,
+            can_on_cluster=can_on_cluster,
+            mvs_pointing_to_it=json.loads(mvs_pointing_to_it) or [],
+        )
 
-        relations = []
+    def _relations_cache_for_schemas(
+        self,
+        relation_configs: Iterable[RelationConfig],
+        cache_schemas=None,
+    ) -> None:
+        if not cache_schemas:
+            cache_schemas = self._get_cache_schemas(relation_configs)
+        if not cache_schemas:
+            return
+
+        results = self.execute_macro(
+            'clickhouse__list_relations_for_schemas',
+            kwargs={'schema_relations': list(cache_schemas)},
+        )
         for row in results:
-            name, schema, type_info, db_engine, mvs_pointing_to_it, on_cluster = row
-            if type_info == 'materialized_view':
-                rel_type = ClickHouseRelationType.MaterializedView
-            elif type_info == 'view':
-                rel_type = ClickHouseRelationType.View
-            elif type_info == 'dictionary':
-                rel_type = ClickHouseRelationType.Dictionary
-            else:
-                rel_type = ClickHouseRelationType.Table
-            can_exchange = (
-                conn_supports_exchange
-                and rel_type == ClickHouseRelationType.Table
-                and engine_can_atomic_exchange(db_engine)
-            )
-            can_on_cluster = (cluster_configured or on_cluster >= 1) and db_engine != 'Replicated'
+            self.cache.add(self._row_to_relation(row))
 
-            relation = self.Relation.create(
-                database='',
-                schema=schema,
-                identifier=name,
-                type=rel_type,
-                can_exchange=can_exchange,
-                can_on_cluster=can_on_cluster,
-                mvs_pointing_to_it=json.loads(mvs_pointing_to_it) or [],
-            )
-            relations.append(relation)
-
-        return relations
+        cache_update = {(r.database, r.schema) for r in cache_schemas if r.schema}
+        self.cache.update_schemas(cache_update)
 
     def get_relation(self, database: Optional[str], schema: str, identifier: str):
         return super().get_relation('', schema, identifier)
