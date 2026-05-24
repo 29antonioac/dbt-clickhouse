@@ -3,6 +3,7 @@
 #### Improvements
 * Starting with this release the `dbt-clickhouse` packages will be published to PyPI using Github Actions as a [Trusted Publisher](https://docs.pypi.org/trusted-publishers/). This will improve both the usability and the security of the release process ([#614](https://github.com/ClickHouse/dbt-clickhouse/pull/614)).
 * Populate `query_id` in `AdapterResponse` for every executed query. The query ID is generated as a UUID4 and forwarded to ClickHouse, making it available via `adapter_response` in dbt artifacts and enabling tools like Elementary to correlate dbt model runs with entries in `system.query_log`.
+* Reduce schema introspection time by batching relation cache population into a single query instead of one per schema. The `mv_sources` CTE is also pre-filtered to only scan MVs relevant to the requested schemas ([#654](https://github.com/ClickHouse/dbt-clickhouse/pull/654)).
 
 
 ### Release [1.10.0], 2026-02-16
