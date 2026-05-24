@@ -1,7 +1,8 @@
 import copy
+import threading
 import uuid
 from abc import ABC, abstractmethod
-from typing import Dict
+from typing import Dict, Optional
 
 from dbt.adapters.clickhouse.credentials import ClickHouseCredentials
 from dbt.adapters.clickhouse.errors import (
@@ -15,6 +16,9 @@ from dbt.adapters.clickhouse.query import quote_identifier
 from dbt.adapters.clickhouse.util import compare_versions, engine_can_atomic_exchange
 from dbt.adapters.exceptions import FailedToConnectError
 from dbt_common.exceptions import DbtConfigError, DbtDatabaseError
+
+_exchange_lock = threading.Lock()
+_exchange_result: Optional[bool] = None
 
 LW_DELETE_SETTING = 'allow_experimental_lightweight_delete'
 ND_MUTATION_SETTING = 'allow_nondeterministic_mutations'
@@ -225,10 +229,21 @@ class ChClientWrapper(ABC):
         self._set_client_database()
 
     def _check_atomic_exchange(self) -> bool:
+        global _exchange_result
+        with _exchange_lock:
+            if _exchange_result is None:
+                _exchange_result = self._run_exchange_test()
+        return _exchange_result
+
+    def _run_exchange_test(self) -> bool:
         try:
             db_engine = self.command('SELECT engine FROM system.databases WHERE name = database()')
             if not engine_can_atomic_exchange(db_engine):
                 return False
+            # Shared is only available on ClickHouse Cloud
+            # EXCHANGE TABLES is guaranteed to work
+            if db_engine == 'Shared':
+                return True
             create_cmd = (
                 'CREATE TABLE IF NOT EXISTS {} (test String) ENGINE MergeTree() ORDER BY tuple()'
             )
