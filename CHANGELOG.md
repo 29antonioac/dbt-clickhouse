@@ -3,8 +3,9 @@
 #### Improvements
 * Starting with this release the `dbt-clickhouse` packages will be published to PyPI using Github Actions as a [Trusted Publisher](https://docs.pypi.org/trusted-publishers/). This will improve both the usability and the security of the release process ([#614](https://github.com/ClickHouse/dbt-clickhouse/pull/614)).
 * Populate `query_id` in `AdapterResponse` for every executed query. The query ID is generated as a UUID4 and forwarded to ClickHouse, making it available via `adapter_response` in dbt artifacts and enabling tools like Elementary to correlate dbt model runs with entries in `system.query_log`.
+* Replaced legacy `docker-compose` commands with `docker compose` (V2)
+* Updated GitHub Actions workflow to use Docker Compose V2
 * Reduce connection startup overhead from the `EXCHANGE TABLES` capability check. On ClickHouse Cloud (Shared engine), the check now short-circuits immediately after detecting the engine — skipping 5 DDL round-trips (2× `CREATE TABLE`, `EXCHANGE TABLES`, 2× `DROP TABLE`) that were previously run on every connection open. For all other engine types, the result is cached behind a process-level lock so the DDL test runs at most once per dbt invocation regardless of thread count. ([#653](https://github.com/ClickHouse/dbt-clickhouse/pull/653)).
-
 
 ### Release [1.10.0], 2026-02-16
 
